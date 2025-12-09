@@ -1,0 +1,314 @@
+{
+  "uid": "drift-performance",
+  "title": "Drift Performance",
+  "tags": [
+    "performance",
+    "orchestrator",
+    "driftorchestrator"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "🎯 Pipeline Overview",
+      "type": "row",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "avg(rate(orchestrator_pipeline_duration_ms_sum{service=\"DriftOrchestrator\"}[$__rate_interval]) / rate(orchestrator_pipeline_duration_ms_count{service=\"DriftOrchestrator\"}[$__rate_interval]))",
+          "legendFormat": "Avg",
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Response Time",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "green"
+              },
+              {
+                "value": 100,
+                "color": "yellow"
+              },
+              {
+                "value": 500,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "horizontal",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(orchestrator_pipeline_duration_ms_count{service=\"DriftOrchestrator\",status=\"success\"}[$__rate_interval])) / sum(rate(orchestrator_pipeline_duration_ms_count{service=\"DriftOrchestrator\"}[$__rate_interval])) * 100",
+          "legendFormat": "Success",
+          "refId": "A"
+        }
+      ],
+      "title": "Success Rate",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 95,
+                "color": "yellow"
+              },
+              {
+                "value": 99,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(orchestrator_pipeline_duration_ms_bucket{service=\"DriftOrchestrator\"}[$__rate_interval])) by (le))",
+          "legendFormat": "P95",
+          "refId": "A"
+        }
+      ],
+      "title": "P95 Latency",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "green"
+              },
+              {
+                "value": 300,
+                "color": "yellow"
+              },
+              {
+                "value": 1500,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "(sum(rate(orchestrator_pipeline_duration_ms_count{service=\"DriftOrchestrator\"}[$__rate_interval])) or vector(0)) * 60",
+          "legendFormat": "ops/min",
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Operations/min",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rpm",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "mean"
+          ]
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "⚙️ Operation Breakdown",
+      "type": "row",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "collapsed": false
+    },
+    {
+      "datasource": "Prometheus",
+      "title": "Drift Operations",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "avg(rate(orchestrator_stage_latency_ms_sum{service=\"DriftOrchestrator\",stage=\"validate-input\"}[$__rate_interval]) / rate(orchestrator_stage_latency_ms_count{service=\"DriftOrchestrator\",stage=\"validate-input\"}[$__rate_interval]))",
+          "legendFormat": "1. Validate Input",
+          "refId": "A"
+        },
+        {
+          "expr": "avg(rate(orchestrator_stage_latency_ms_sum{service=\"DriftOrchestrator\",stage=\"load-branches\"}[$__rate_interval]) / rate(orchestrator_stage_latency_ms_count{service=\"DriftOrchestrator\",stage=\"load-branches\"}[$__rate_interval]))",
+          "legendFormat": "2. Load Branches",
+          "refId": "B"
+        },
+        {
+          "expr": "avg(rate(orchestrator_stage_latency_ms_sum{service=\"DriftOrchestrator\",stage=\"embed-message\"}[$__rate_interval]) / rate(orchestrator_stage_latency_ms_count{service=\"DriftOrchestrator\",stage=\"embed-message\"}[$__rate_interval]))",
+          "legendFormat": "3. Embed Message",
+          "refId": "C"
+        },
+        {
+          "expr": "avg(rate(orchestrator_stage_latency_ms_sum{service=\"DriftOrchestrator\",stage=\"classify-route\"}[$__rate_interval]) / rate(orchestrator_stage_latency_ms_count{service=\"DriftOrchestrator\",stage=\"classify-route\"}[$__rate_interval]))",
+          "legendFormat": "4. Classify Route",
+          "refId": "D"
+        },
+        {
+          "expr": "avg(rate(orchestrator_stage_latency_ms_sum{service=\"DriftOrchestrator\",stage=\"execute-route\"}[$__rate_interval]) / rate(orchestrator_stage_latency_ms_count{service=\"DriftOrchestrator\",stage=\"execute-route\"}[$__rate_interval]))",
+          "legendFormat": "5. Execute Route",
+          "refId": "E"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 2,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "gradientMode": "opacity",
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

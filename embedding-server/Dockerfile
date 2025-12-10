@@ -40,9 +40,9 @@ USER appuser
 ENV PORT=8100
 EXPOSE 8100
 
-# Health check
+# Health check - use 127.0.0.1 explicitly for IPv4 since we're on dual-stack
 HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
-    CMD python -c "import urllib.request; import os; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", 8100)}/health')"
+    CMD python -c "import urllib.request; import os; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", 8100)}/health')"
 
 # Use shell to expand $PORT
 # Listen on :: (IPv6 all interfaces) which also accepts IPv4 connections on dual-stack systems

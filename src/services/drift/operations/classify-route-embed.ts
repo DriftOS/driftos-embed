@@ -1,34 +1,12 @@
 import type { DriftContext } from '../types';
-import { cosineSimilarity, getDriftAction } from '@services/local-embeddings';
+import { cosineSimilarity, getDriftAction, analyzeDrift, type DriftAnalysis } from '@services/local-embeddings';
 
 /**
- * Q&A Boost Factor
- *
- * When the previous message was a question and current message is an answer,
- * the semantic similarity is naturally lower. Boost to keep Q&A pairs together.
+ * Topic return boost factor for routing to other branches.
+ * Applied when user says "back to X", "returning to X", etc.
+ * This is applied separately since it's used for ROUTE decisions to other branches.
  */
-const QA_BOOST_FACTOR = 1.3;
-
-/**
- * Check if this is a Q&A pair (previous was question, current is answer).
- * Returns boosted similarity if so, otherwise returns original.
- */
-function applyQAPairBoost(
-  similarity: number,
-  currentContent: string,
-  lastMessageContent?: string
-): number {
-  if (!lastMessageContent) return similarity;
-
-  const lastWasQuestion = lastMessageContent.includes('?');
-  const currentIsAnswer = !currentContent.includes('?');
-
-  // Boost only when: previous was question AND current is answer
-  if (lastWasQuestion && currentIsAnswer) {
-    return Math.min(similarity * QA_BOOST_FACTOR, 1.0);
-  }
-  return similarity;
-}
+const TOPIC_RETURN_BOOST_FACTOR = 2.5;
 
 /**
  * ClassifyRouteEmbed Operation
@@ -38,17 +16,36 @@ function applyQAPairBoost(
  * - BRANCH_SAME_CLUSTER: newClusterThreshold < similarity < stayThreshold (same domain, diff topic)
  * - BRANCH_NEW_CLUSTER: similarity < newClusterThreshold (different domain)
  *
- * Logic:
+ * Flow:
  * 1. No branches → BRANCH (first message)
- * 2. Check drift against current branch centroid
+ * 2. Call Python /analyze-drift for NLP analysis + boosted similarity
  * 3. If STAY → stay in current branch
- * 4. If BRANCH → check all branches for potential ROUTE
+ * 4. If drift detected → check all branches for potential ROUTE
  * 5. Route if another branch is above route threshold
  * 6. Otherwise create new branch (same or new cluster based on drift action)
+ *
+ * Python handles: spaCy NLP, similarity calculation, boost application
+ * Node handles: routing decisions based on final numbers
  */
 export async function classifyRouteEmbed(ctx: DriftContext): Promise<DriftContext> {
   if (!ctx.embedding) {
     throw new Error('Missing embedding - run embedMessage first');
+  }
+
+  // Assistant messages always STAY in current branch - no drift detection
+  if (ctx.role === 'assistant') {
+    const currentBranch = ctx.branches?.find((b) => b.isCurrentBranch);
+    ctx.classification = {
+      action: 'STAY',
+      driftAction: 'STAY',
+      targetBranchId: currentBranch?.id,
+      targetClusterId: currentBranch?.clusterId,
+      reason: 'assistant_message',
+      confidence: 1.0,
+      similarity: 1.0,
+    };
+    ctx.reasonCodes.push('assistant_auto_stay');
+    return ctx;
   }
 
   const { stayThreshold, newClusterThreshold, routeThreshold } = ctx.policy;
@@ -84,10 +81,30 @@ export async function classifyRouteEmbed(ctx: DriftContext): Promise<DriftContex
     return ctx;
   }
 
-  // Calculate similarity to current branch (with Q&A pair boost if applicable)
-  const rawSimilarity = cosineSimilarity(ctx.embedding, currentBranch.centroid);
-  const currentSimilarity = applyQAPairBoost(rawSimilarity, ctx.content, ctx.lastMessageContent);
+  // Call Python for full drift analysis (NLP + similarity + boosts)
+  let driftAnalysis: DriftAnalysis | null = null;
+  let currentSimilarity: number;
+
+  if (ctx.lastMessageContent) {
+    // Have previous message - get full analysis with boosts
+    driftAnalysis = await analyzeDrift(
+      ctx.content,
+      ctx.lastMessageContent,
+      ctx.embedding,
+      currentBranch.centroid
+    );
+    currentSimilarity = driftAnalysis.boosted_similarity;
+  } else {
+    // No previous message - just compute raw similarity
+    currentSimilarity = cosineSimilarity(ctx.embedding, currentBranch.centroid);
+  }
+
   const driftAction = getDriftAction(currentSimilarity, stayThreshold, newClusterThreshold);
+
+  // Build reason suffix from analysis
+  const boostSuffix = driftAnalysis?.boosts_applied.length
+    ? `, boosts: ${driftAnalysis.boosts_applied.join('+')}`
+    : '';
 
   // Case 3: STAY - above stay threshold with current branch
   if (driftAction === 'STAY') {
@@ -96,11 +113,12 @@ export async function classifyRouteEmbed(ctx: DriftContext): Promise<DriftContex
       driftAction: 'STAY',
       targetBranchId: currentBranch.id,
       targetClusterId: currentBranch.clusterId,
-      reason: `similar_to_current (${currentSimilarity.toFixed(3)} > ${stayThreshold})`,
+      reason: `similar_to_current (${currentSimilarity.toFixed(3)} > ${stayThreshold}${boostSuffix})`,
       confidence: currentSimilarity,
       similarity: currentSimilarity,
     };
     ctx.reasonCodes.push('stay_similar');
+    driftAnalysis?.boosts_applied.forEach(b => ctx.reasonCodes.push(b));
     return ctx;
   }
 
@@ -109,14 +127,21 @@ export async function classifyRouteEmbed(ctx: DriftContext): Promise<DriftContex
     (b) => !b.isCurrentBranch && b.centroid?.length
   );
 
+  // Use topic return signal from analysis (already computed by Python)
+  const hasTopicReturnSignal = driftAnalysis?.analysis.has_topic_return_signal ?? false;
+
   if (otherBranches.length > 0) {
-    // Note: Q&A boost only applies to current branch (where the question was asked)
-    // Routing to other branches uses raw similarity
+    // Apply topic return boost if explicit signal detected
     const branchScores = otherBranches
-      .map((branch) => ({
-        branch,
-        similarity: cosineSimilarity(ctx.embedding!, branch.centroid),
-      }))
+      .map((branch) => {
+        const rawSim = cosineSimilarity(ctx.embedding!, branch.centroid);
+        const boostedSim = hasTopicReturnSignal ? rawSim * TOPIC_RETURN_BOOST_FACTOR : rawSim;
+        return {
+          branch,
+          similarity: Math.min(boostedSim, 1.0),
+          rawSimilarity: rawSim,
+        };
+      })
       .sort((a, b) => b.similarity - a.similarity);
 
     const bestMatch = branchScores[0];
@@ -128,11 +153,12 @@ export async function classifyRouteEmbed(ctx: DriftContext): Promise<DriftContex
         driftAction: getDriftAction(bestMatch.similarity, stayThreshold, newClusterThreshold),
         targetBranchId: bestMatch.branch.id,
         targetClusterId: bestMatch.branch.clusterId,
-        reason: `routing_to_existing "${bestMatch.branch.summary}" (${bestMatch.similarity.toFixed(3)} > ${routeThreshold})`,
+        reason: `routing_to_existing "${bestMatch.branch.summary}" (${bestMatch.similarity.toFixed(3)} > ${routeThreshold}${hasTopicReturnSignal ? ', topic_return_boost' : ''})`,
         confidence: bestMatch.similarity,
         similarity: bestMatch.similarity,
       };
       ctx.reasonCodes.push('route_existing');
+      if (hasTopicReturnSignal) ctx.reasonCodes.push('topic_return_signal');
       return ctx;
     }
   }

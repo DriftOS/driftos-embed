@@ -52,8 +52,8 @@ export async function executeRoute(ctx: DriftContext): Promise<DriftContext> {
       break;
   }
 
-  // Async fact extraction when leaving a branch
-  if (action === 'BRANCH' && ctx.currentBranch) {
+  // Async fact extraction when leaving a branch (if enabled)
+  if (ctx.extractFacts && action === 'BRANCH' && ctx.currentBranch) {
     // Fire and forget - don't block response
     factsService
       .extract(ctx.currentBranch.id)
@@ -61,7 +61,7 @@ export async function executeRoute(ctx: DriftContext): Promise<DriftContext> {
     ctx.reasonCodes.push('facts_extraction_triggered');
   }
 
-  if (action === 'ROUTE' && ctx.currentBranch) {
+  if (ctx.extractFacts && action === 'ROUTE' && ctx.currentBranch) {
     factsService
       .extract(ctx.currentBranch.id)
       .catch((err) => logger.warn({ err, branchId: ctx.currentBranch?.id }, 'Async fact extraction failed'));
@@ -80,9 +80,9 @@ export async function executeRoute(ctx: DriftContext): Promise<DriftContext> {
     },
   });
 
-  // Update branch centroid (running average)
+  // Update branch centroid (weighted by role - user messages matter more)
   if (ctx.embedding && action !== 'BRANCH') {
-    await updateCentroid(branchId, ctx.embedding);
+    await updateCentroid(branchId, ctx.embedding, ctx.role);
   }
 
   // Load the branch for result
@@ -97,13 +97,24 @@ export async function executeRoute(ctx: DriftContext): Promise<DriftContext> {
   return ctx;
 }
 
-async function updateCentroid(branchId: string, newEmbedding: number[]): Promise<void> {
+/**
+ * User message weight multiplier.
+ * User messages define the topic, assistant responses elaborate.
+ * Weight user messages 3x more heavily in centroid calculation.
+ */
+const USER_WEIGHT = 3.0;
+const ASSISTANT_WEIGHT = 1.0;
+
+async function updateCentroid(
+  branchId: string,
+  newEmbedding: number[],
+  role: 'user' | 'assistant' = 'user'
+): Promise<void> {
   const branch = await prisma.branch.findUniqueOrThrow({
     where: { id: branchId },
     include: { _count: { select: { messages: true } } },
   });
 
-  const messageCount = branch._count.messages;
   const oldCentroid = branch.centroid as number[];
 
   if (oldCentroid.length === 0) {
@@ -114,9 +125,17 @@ async function updateCentroid(branchId: string, newEmbedding: number[]): Promise
     return;
   }
 
-  // Running average: new = old + (new - old) / n
+  // Weighted running average
+  // User messages get 3x weight, assistant gets 1x
+  const weight = role === 'user' ? USER_WEIGHT : ASSISTANT_WEIGHT;
+  const messageCount = branch._count.messages;
+  
+  // Effective count treats user messages as worth more
+  // new = old + weight * (new - old) / (n + weight - 1)
+  const effectiveDivisor = messageCount + weight - 1;
+  
   const updatedCentroid = oldCentroid.map(
-    (val, i) => val + ((newEmbedding[i] ?? 0) - val) / messageCount
+    (val, i) => val + (weight * ((newEmbedding[i] ?? 0) - val)) / effectiveDivisor
   );
 
   await prisma.branch.update({

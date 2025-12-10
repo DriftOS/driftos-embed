@@ -29,6 +29,7 @@ export class DriftService {
     options: {
       role?: 'user' | 'assistant';
       currentBranchId?: string;
+      extractFacts?: boolean;
     } = {}
   ): Promise<OrchestratorResult<DriftResult>> {
     const input: DriftInput = {
@@ -36,6 +37,7 @@ export class DriftService {
       content,
       role: options.role ?? 'user',
       currentBranchId: options.currentBranchId,
+      extractFacts: options.extractFacts,
     };
 
     return this.orchestrator.execute(input);

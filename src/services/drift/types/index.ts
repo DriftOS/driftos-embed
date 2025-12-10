@@ -35,6 +35,8 @@ export interface DriftInput {
   role?: 'user' | 'assistant';
   currentBranchId?: string;
   policy?: Partial<DriftPolicy>;
+  /** Enable automatic fact extraction (default: true) */
+  extractFacts?: boolean;
 }
 
 /**
@@ -82,6 +84,8 @@ export interface DriftContext extends OperationContext {
   role: 'user' | 'assistant';
   currentBranchId?: string;
   policy: DriftPolicy;
+  /** Enable automatic fact extraction (default: true) */
+  extractFacts: boolean;
 
   reasonCodes: string[];
   currentBranch?: Branch;

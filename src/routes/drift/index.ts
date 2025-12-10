@@ -15,6 +15,7 @@ const driftRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
           content: Type.String(),
           role: Type.Optional(Type.Union([Type.Literal('user'), Type.Literal('assistant')])),
           currentBranchId: Type.Optional(Type.String()),
+          extractFacts: Type.Optional(Type.Boolean()),
         }),
         response: {
           200: Type.Object({
@@ -53,11 +54,12 @@ const driftRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { conversationId, content, role, currentBranchId } = request.body;
+      const { conversationId, content, role, currentBranchId, extractFacts } = request.body;
 
       const result = await driftService.route(conversationId, content, {
         role,
         currentBranchId,
+        extractFacts,
       });
 
       if (!result.success) {

@@ -5,11 +5,11 @@ import { embed } from '@services/local-embeddings';
  * EmbedMessage Operation
  *
  * Generates embedding for the message content using the Python embedding server.
- * Preprocessing is enabled by default to strip conversational noise for better drift detection.
+ * Preprocessing disabled - it hurts follow-up question detection by stripping contextual words.
  */
 export async function embedMessage(ctx: DriftContext): Promise<DriftContext> {
-  // Preprocess + embed for better semantic separation
-  ctx.embedding = await embed(ctx.content, true);
+  // No preprocessing - raw text preserves contextual relationships better
+  ctx.embedding = await embed(ctx.content, false);
   ctx.reasonCodes.push('message_embedded');
 
   return ctx;

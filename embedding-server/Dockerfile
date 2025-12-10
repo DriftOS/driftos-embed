@@ -32,6 +32,9 @@ COPY server.py .
 COPY preprocessing.py .
 COPY nlp_analysis.py .
 
+# Pre-download sentence-transformers model during build (avoids runtime download)
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-MiniLM-L6-v2')"
+
 # Non-root user
 RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app
 USER appuser

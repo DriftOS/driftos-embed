@@ -149,6 +149,11 @@ model Message {
   content   String
   embedding Float[]  /// Message embedding for similarity
   
+  /// Drift routing decision
+  driftAction   String?  /// 'STAY' | 'BRANCH' | 'ROUTE'
+  driftReason   String?  /// Reason for the routing decision
+  driftMetadata Json?    /// Full drift analysis: similarity scores, boosts, NLP signals
+  
   /// Preprocessed versions for drift detection
   preprocessedContent   String?
   preprocessedEmbedding Float[]

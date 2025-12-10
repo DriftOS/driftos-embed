@@ -1,6 +1,7 @@
 import { Type } from '@sinclair/typebox';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { healthCheck as embeddingHealthCheck } from '@services/local-embeddings';
+import dns from 'dns';
 
 const healthRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
   // Health check endpoint
@@ -76,10 +77,20 @@ const healthRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
 
       try {
         // Check embedding server connection
+        // First try DNS lookup to debug
+        const hostname = new URL(embeddingServerUrl).hostname;
+        const dnsResult = await new Promise<string>((resolve) => {
+          dns.lookup(hostname, (err, address) => {
+            if (err) resolve(`DNS error: ${err.message}`);
+            else resolve(`DNS resolved: ${address}`);
+          });
+        });
+        fastify.log.info({ hostname, dnsResult }, 'DNS lookup result');
+
         await embeddingHealthCheck();
         isEmbeddingServerReady = true;
       } catch (err) {
-        embeddingError = err instanceof Error ? err.message : String(err);
+        embeddingError = err instanceof Error ? `${err.message} (cause: ${(err as any).cause?.message || 'unknown'})` : String(err);
         fastify.log.error({ err, embeddingServerUrl }, 'Embedding server health check failed');
       }
 

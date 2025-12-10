@@ -32,6 +32,36 @@ interface HealthResponse {
   dimension: number;
 }
 
+interface EntityOverlapResponse {
+  has_overlap: boolean;
+  overlap_score: number;
+  shared_entities: string[];
+  text1_entities: string[];
+  text2_entities: string[];
+}
+
+interface EntityOverlap {
+  has_overlap: boolean;
+  overlap_score: number;
+  shared_entities: string[];
+}
+
+export interface MessageAnalysis {
+  current_is_question: boolean;
+  previous_is_question: boolean;
+  current_has_anaphoric_ref: boolean;
+  has_topic_return_signal: boolean;
+  entity_overlap: EntityOverlap;
+}
+
+export interface DriftAnalysis {
+  raw_similarity: number;
+  boosted_similarity: number;
+  boost_multiplier: number;
+  boosts_applied: string[];
+  analysis: MessageAnalysis;
+}
+
 const EMBEDDING_SERVER_URL = process.env.EMBEDDING_SERVER_URL ?? 'http://localhost:8100';
 
 // Default thresholds from gradient benchmark
@@ -179,6 +209,110 @@ export async function healthCheck(): Promise<HealthResponse> {
 
   if (!response.ok) {
     throw new Error(`Embedding server unavailable: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Check entity overlap between two texts using spaCy NER
+ * Used to detect when user references something from previous message
+ */
+export async function checkEntityOverlap(text1: string, text2: string): Promise<EntityOverlapResponse> {
+  const response = await fetch(`${EMBEDDING_SERVER_URL}/entity-overlap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text1, text2 }),
+  });
+
+  if (!response.ok) {
+    // Non-fatal - return no overlap on error
+    return {
+      has_overlap: false,
+      overlap_score: 0,
+      shared_entities: [],
+      text1_entities: [],
+      text2_entities: [],
+    };
+  }
+
+  return response.json();
+}
+
+/**
+ * Analyze context between current and previous message.
+ * Returns all signals needed for contextual boost calculation.
+ */
+export async function analyzeMessage(current: string, previous: string): Promise<MessageAnalysis> {
+  const response = await fetch(`${EMBEDDING_SERVER_URL}/analyze-message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current, previous }),
+  });
+
+  if (!response.ok) {
+    // Non-fatal - return neutral analysis on error
+    return {
+      current_is_question: false,
+      previous_is_question: false,
+      current_has_anaphoric_ref: false,
+      has_topic_return_signal: false,
+      entity_overlap: {
+        has_overlap: false,
+        overlap_score: 0,
+        shared_entities: [],
+      },
+    };
+  }
+
+  return response.json();
+}
+
+/**
+ * Full drift analysis: NLP + similarity + boost application.
+ * This is the main endpoint for drift detection.
+ * 
+ * Python handles all the analysis and returns the final boosted similarity.
+ * Node just compares against thresholds to make routing decisions.
+ */
+export async function analyzeDrift(
+  current: string,
+  previous: string,
+  currentEmbedding: number[],
+  branchCentroid: number[]
+): Promise<DriftAnalysis> {
+  const response = await fetch(`${EMBEDDING_SERVER_URL}/analyze-drift`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      current,
+      previous,
+      current_embedding: currentEmbedding,
+      branch_centroid: branchCentroid,
+    }),
+  });
+
+  if (!response.ok) {
+    // Fallback: return raw similarity with no boosts
+    // Calculate cosine similarity manually
+    const rawSim = cosineSimilarity(currentEmbedding, branchCentroid);
+    return {
+      raw_similarity: rawSim,
+      boosted_similarity: rawSim,
+      boost_multiplier: 1.0,
+      boosts_applied: [],
+      analysis: {
+        current_is_question: false,
+        previous_is_question: false,
+        current_has_anaphoric_ref: false,
+        has_topic_return_signal: false,
+        entity_overlap: {
+          has_overlap: false,
+          overlap_score: 0,
+          shared_entities: [],
+        },
+      },
+    };
   }
 
   return response.json();

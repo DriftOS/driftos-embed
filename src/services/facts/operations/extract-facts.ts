@@ -7,10 +7,14 @@ const logger = createLogger('facts');
 
 // JSON Schema for models that support it (Scout, Maverick, GPT-4o)
 const FACT_SCHEMA = {
-  name: 'facts',
+  name: 'facts_and_topic',
   schema: {
     type: 'object',
     properties: {
+      branchTopic: {
+        type: 'string',
+        description: 'A concise 3-6 word topic name for this conversation branch',
+      },
       facts: {
         type: 'array',
         items: {
@@ -28,19 +32,20 @@ const FACT_SCHEMA = {
         },
       },
     },
-    required: ['facts'],
+    required: ['branchTopic', 'facts'],
   },
 };
 
-const EXTRACTION_PROMPT = `Extract and CONSOLIDATE key facts from this conversation branch.
-Return a JSON object with a "facts" array.
+const EXTRACTION_PROMPT = `Analyze this conversation branch and extract a topic name and key facts.
+Return a JSON object with "branchTopic" and "facts".
 
 RULES:
-1. ONE fact per concept - consolidate multiple mentions into a single fact
-2. messageIds: Include ALL message IDs that mention/reinforce this fact (provenance)
-3. Use the LATEST/MOST SPECIFIC value if something evolves
-4. Use snake_case keys (e.g., "destination", "budget_range", "hotel_preference")
-5. Confidence scoring:
+1. branchTopic: A concise 3-6 word topic name (e.g., "Buying a house in London", "Planning dinner options", "Car repair advice")
+2. ONE fact per concept - consolidate multiple mentions into a single fact
+3. messageIds: Include ALL message IDs that mention/reinforce this fact (provenance)
+4. Use the LATEST/MOST SPECIFIC value if something evolves
+5. Use snake_case keys (e.g., "destination", "budget_range", "hotel_preference")
+6. Confidence scoring:
    - 1.0 = explicitly stated in multiple messages (reinforced)
    - 0.9 = explicitly stated once
    - 0.7 = clearly implied
@@ -48,6 +53,7 @@ RULES:
 
 OUTPUT FORMAT:
 {
+  "branchTopic": "3-6 word topic name",
   "facts": [
     {"key": "destination", "value": "Paris", "confidence": 1.0, "messageIds": ["abc123", "def456"]}
   ]
@@ -55,7 +61,7 @@ OUTPUT FORMAT:
 
 EXTRACT:
 - Decisions made
-- Preferences stated  
+- Preferences stated
 - Key entities (places, dates, people, amounts)
 - Constraints or requirements
 
@@ -187,7 +193,7 @@ Output JSON with consolidated facts and full provenance (all supporting messageI
     jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   }
 
-  let parsed: { facts?: unknown[] };
+  let parsed: { branchTopic?: string; facts?: unknown[] };
   try {
     parsed = JSON.parse(jsonStr);
   } catch {
@@ -205,7 +211,12 @@ Output JSON with consolidated facts and full provenance (all supporting messageI
   }));
 
   ctx.extractedFacts = facts.filter((f) => f.confidence >= ctx.policy.minConfidence);
+  ctx.branchTopic = parsed.branchTopic;
   ctx.reasonCodes.push(`extracted_${ctx.extractedFacts.length}_facts`);
+
+  if (ctx.branchTopic) {
+    ctx.reasonCodes.push('topic_extracted');
+  }
 
   return ctx;
 }

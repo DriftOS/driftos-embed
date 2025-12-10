@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { healthCheck as embeddingHealthCheck } from '@services/local-embeddings';
 
 const healthRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
   // Health check endpoint
@@ -41,14 +42,19 @@ const healthRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             status: Type.Literal('ready'),
             services: Type.Object({
               database: Type.Boolean(),
+              embeddingServer: Type.Boolean(),
             }),
+            embeddingServerUrl: Type.Optional(Type.String()),
             timestamp: Type.String(),
           }),
           503: Type.Object({
             status: Type.Literal('not_ready'),
             services: Type.Object({
               database: Type.Boolean(),
+              embeddingServer: Type.Boolean(),
             }),
+            embeddingServerUrl: Type.Optional(Type.String()),
+            embeddingError: Type.Optional(Type.String()),
             timestamp: Type.String(),
           }),
         },
@@ -56,6 +62,9 @@ const healthRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     },
     async (_request, reply) => {
       let isDatabaseReady = false;
+      let isEmbeddingServerReady = false;
+      let embeddingError: string | undefined;
+      const embeddingServerUrl = process.env.EMBEDDING_SERVER_URL ?? 'http://localhost:8100';
 
       try {
         // Check database connection
@@ -65,14 +74,27 @@ const healthRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         fastify.log.error({ err }, 'Database health check failed');
       }
 
-      const status = isDatabaseReady ? 'ready' : 'not_ready';
-      const statusCode = isDatabaseReady ? 200 : 503;
+      try {
+        // Check embedding server connection
+        await embeddingHealthCheck();
+        isEmbeddingServerReady = true;
+      } catch (err) {
+        embeddingError = err instanceof Error ? err.message : String(err);
+        fastify.log.error({ err, embeddingServerUrl }, 'Embedding server health check failed');
+      }
+
+      const allReady = isDatabaseReady && isEmbeddingServerReady;
+      const status = allReady ? 'ready' : 'not_ready';
+      const statusCode = allReady ? 200 : 503;
 
       return reply.status(statusCode).send({
         status,
         services: {
           database: isDatabaseReady,
+          embeddingServer: isEmbeddingServerReady,
         },
+        embeddingServerUrl,
+        embeddingError,
         timestamp: new Date().toISOString(),
       });
     }

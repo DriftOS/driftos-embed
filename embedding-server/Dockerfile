@@ -1,40 +1,46 @@
-# DriftOS Embedding Server
-# Python FastAPI service for embeddings + NLP analysis
-
+# DriftOS Embedding Server - Slim build
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install only essential system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copy requirements first for better caching
+# Copy requirements
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install CPU-only PyTorch first (much smaller than default CUDA version)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-# Download spaCy model
+# Install remaining deps
+RUN pip install --no-cache-dir \
+    sentence-transformers \
+    transformers \
+    fastapi \
+    uvicorn \
+    pydantic \
+    spacy
+
+# Download smallest spaCy model
 RUN python -m spacy download en_core_web_sm
 
-# Copy application code
+# Copy app code
 COPY server.py .
 COPY preprocessing.py .
 COPY nlp_analysis.py .
 
-# Create non-root user
+# Non-root user
 RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Port (Railway will set PORT env var)
 ENV PORT=8100
 EXPOSE 8100
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Reduced health check (model load is slow)
+HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"
 
-# Start server
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8100"]

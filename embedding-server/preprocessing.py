@@ -12,17 +12,20 @@ import spacy
 # Load spaCy model (small is fast, good enough for lemmatization)
 try:
     nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    # Full pipeline for entity extraction (used by /entity-overlap endpoint)
+    nlp_full = spacy.load("en_core_web_sm")
 except OSError:
     import subprocess
     import logging
     logging.getLogger("preprocessing").info("Downloading spaCy model...")
     subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
     nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    nlp_full = spacy.load("en_core_web_sm")
 
 # Words to completely remove (don't contribute to topic)
 REMOVE_WORDS = {
-    # Articles & Determiners
-    'a', 'an', 'the', 'this', 'that', 'these', 'those', 'some', 'any',
+    # Articles & Determiners (keep 'this', 'that', 'it' - they're anaphoric references)
+    'a', 'an', 'the', 'these', 'those', 'some', 'any',
     # Politeness markers
     'please', 'pls', 'plz', 'thanks', 'thank', 'thankyou', 'ty', 'sorry',
     # Fillers
@@ -35,10 +38,10 @@ REMOVE_WORDS = {
     # Common low-signal verbs (lemmatized forms)
     'get', 'go', 'come', 'let', 'make', 'take', 'give', 'need', 'want',
     'know', 'think', 'see', 'look', 'find', 'tell', 'say', 'ask',
-    # Pronouns
+    # Pronouns (keep 'it', 'its' - anaphoric references to objects)
     'i', 'me', 'my', 'mine', 'we', 'us', 'our', 'ours',
     'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'hers',
-    'it', 'its', 'they', 'them', 'their', 'theirs',
+    'they', 'them', 'their', 'theirs',
     '-pron-',  # spaCy's pronoun placeholder
     # Question words
     'here', 'there', 'now', 'then', 'where', 'when', 'what', 'how', 'why', 'which',

@@ -4,12 +4,75 @@ import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 /**
  * Conversations Routes
  * 
+ * GET  /conversations              - List conversations by prefix
  * GET  /conversations/:id          - Get conversation summary
  * GET  /conversations/:id/branches - List all branches
  * GET  /conversations/:id/context  - Get full conversation context (all branches)
  */
 const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
   
+  // List conversations by prefix (for device-based filtering)
+  fastify.get(
+    '/',
+    {
+      schema: {
+        description: 'List conversations filtered by ID prefix (for device-based access)',
+        tags: ['Conversations'],
+        querystring: Type.Object({
+          prefix: Type.String({ description: 'Conversation ID prefix to filter by' }),
+          limit: Type.Optional(Type.Number({ default: 50, maximum: 100 })),
+        }),
+        response: {
+          200: Type.Object({
+            success: Type.Literal(true),
+            data: Type.Array(
+              Type.Object({
+                id: Type.String(),
+                title: Type.String(),
+                messageCount: Type.Number(),
+                branchCount: Type.Number(),
+                createdAt: Type.String(),
+                updatedAt: Type.String(),
+              })
+            ),
+          }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { prefix, limit = 50 } = request.query;
+
+      // Find conversations with matching prefix
+      const conversations = await fastify.prisma.conversation.findMany({
+        where: {
+          id: { startsWith: prefix },
+        },
+        include: {
+          _count: { select: { branches: true, messages: true } },
+          messages: {
+            take: 1,
+            orderBy: { createdAt: 'asc' },
+            select: { content: true },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: limit,
+      });
+
+      return reply.send({
+        success: true,
+        data: conversations.map((c) => ({
+          id: c.id,
+          title: c.messages[0]?.content?.slice(0, 50) || 'New Chat',
+          messageCount: c._count.messages,
+          branchCount: c._count.branches,
+          createdAt: c.createdAt.toISOString(),
+          updatedAt: c.updatedAt.toISOString(),
+        })),
+      });
+    }
+  );
+
   // Get conversation summary
   fastify.get(
     '/:conversationId',
@@ -154,6 +217,7 @@ const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
           branchId: Type.Optional(Type.String({ description: 'Branch to get context for (defaults to most recent)' })),
           maxMessages: Type.Optional(Type.Number({ default: 50 })),
           includeFacts: Type.Optional(Type.Boolean({ default: true })),
+          allBranches: Type.Optional(Type.Boolean({ default: false, description: 'If true, return messages from ALL branches, not just lineage' })),
         }),
         response: {
           200: Type.Object({
@@ -175,6 +239,9 @@ const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                   branchId: Type.String(),
                   role: Type.String(),
                   content: Type.String(),
+                  driftAction: Type.Optional(Type.String()),
+                  driftReason: Type.Optional(Type.String()),
+                  driftMetadata: Type.Optional(Type.Any()),
                   createdAt: Type.String(),
                 })
               ),
@@ -204,7 +271,7 @@ const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     },
     async (request, reply) => {
       const { conversationId } = request.params;
-      const { branchId, maxMessages = 50, includeFacts = true } = request.query;
+      const { branchId, maxMessages = 50, includeFacts = true, allBranches = false } = request.query;
 
       // Get conversation
       const conversation = await fastify.prisma.conversation.findUnique({
@@ -238,28 +305,40 @@ const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         });
       }
 
-      // Walk up the branch tree to get lineage
-      const branchLineage: string[] = [targetBranch.id];
-      let currentBranch = targetBranch;
-      while (currentBranch.parentId) {
-        branchLineage.unshift(currentBranch.parentId);
-        const parent = await fastify.prisma.branch.findUnique({
-          where: { id: currentBranch.parentId },
+      // Determine which branches to include
+      let branchIds: string[];
+      
+      if (allBranches) {
+        // Get ALL branches for this conversation
+        const allBranchRecords = await fastify.prisma.branch.findMany({
+          where: { conversationId },
+          select: { id: true },
         });
-        if (!parent) break;
-        currentBranch = parent;
+        branchIds = allBranchRecords.map(b => b.id);
+      } else {
+        // Walk up the branch tree to get lineage only
+        branchIds = [targetBranch.id];
+        let currentBranch = targetBranch;
+        while (currentBranch.parentId) {
+          branchIds.unshift(currentBranch.parentId);
+          const parent = await fastify.prisma.branch.findUnique({
+            where: { id: currentBranch.parentId },
+          });
+          if (!parent) break;
+          currentBranch = parent;
+        }
       }
 
-      // Get branches in lineage
+      // Get branches
       const branches = await fastify.prisma.branch.findMany({
-        where: { id: { in: branchLineage } },
+        where: { id: { in: branchIds } },
         include: { _count: { select: { messages: true } } },
         orderBy: { branchDepth: 'asc' },
       });
 
-      // Get messages from lineage branches
+      // Get messages from selected branches
       const messages = await fastify.prisma.message.findMany({
-        where: { branchId: { in: branchLineage } },
+        where: { branchId: { in: branchIds } },
         orderBy: { createdAt: 'asc' },
         take: maxMessages,
         select: {
@@ -267,6 +346,9 @@ const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
           branchId: true,
           role: true,
           content: true,
+          driftAction: true,
+          driftReason: true,
+          driftMetadata: true,
           createdAt: true,
         },
       });
@@ -283,7 +365,7 @@ const conversationsRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
 
       if (includeFacts) {
         const rawFacts = await fastify.prisma.fact.findMany({
-          where: { branchId: { in: branchLineage } },
+          where: { branchId: { in: branchIds } },
           include: { branch: { select: { summary: true } } },
           orderBy: { createdAt: 'asc' },
         });

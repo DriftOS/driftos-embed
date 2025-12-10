@@ -109,7 +109,9 @@ export abstract class BaseOrchestrator<
       }
 
       if (this.config.logErrors) {
-        this.logger.error({ err: error }, 'Orchestration error');
+        // Sanitize error message to avoid logging huge embedding arrays
+        const sanitizedError = this.sanitizeError(error);
+        this.logger.error({ err: sanitizedError }, 'Orchestration error');
       }
 
       return {
@@ -251,5 +253,39 @@ export abstract class BaseOrchestrator<
    */
   isMetricsEnabled(): boolean {
     return this.config.enableMetrics;
+  }
+
+  /**
+   * Sanitize error messages to avoid logging huge data (like embeddings)
+   */
+  private sanitizeError(error: unknown): Error {
+    if (!(error instanceof Error)) {
+      return new Error(String(error));
+    }
+
+    // Prisma errors often include the full query with embedding arrays
+    // Truncate the message to something reasonable
+    let message = error.message;
+    
+    // Remove embedding arrays from Prisma error messages
+    // Pattern: embedding: [ ... hundreds of numbers ... ]
+    message = message.replace(/embedding:\s*\[[\s\S]*?\]/g, 'embedding: [... truncated ...]');
+    
+    // Also truncate any very long arrays in the message
+    message = message.replace(/\[[\d\s,.\-e+]+\]/g, (match) => {
+      if (match.length > 100) {
+        return '[... array truncated ...]';
+      }
+      return match;
+    });
+
+    // Limit overall message length
+    if (message.length > 2000) {
+      message = message.slice(0, 2000) + '\n... [message truncated]';
+    }
+
+    const sanitized = new Error(message);
+    sanitized.stack = error.stack;
+    return sanitized;
   }
 }

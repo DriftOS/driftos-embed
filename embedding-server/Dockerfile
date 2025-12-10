@@ -36,11 +36,14 @@ COPY nlp_analysis.py .
 RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app
 USER appuser
 
+# Railway sets PORT dynamically
 ENV PORT=8100
 EXPOSE 8100
 
-# Reduced health check (model load is slow)
+# Health check
 HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"
+    CMD python -c "import urllib.request; import os; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", 8100)}/health')"
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8100"]
+# Use shell to expand $PORT
+# Listen on :: (IPv6 all interfaces) which also accepts IPv4 connections on dual-stack systems
+CMD ["sh", "-c", "uvicorn server:app --host :: --port ${PORT:-8100}"]
